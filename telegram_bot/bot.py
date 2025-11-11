@@ -6,6 +6,9 @@ TimeKeeper Telegram Backup Bot
 
 import os
 import logging
+import random
+import json
+import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -19,89 +22,97 @@ logger = logging.getLogger(__name__)
 # Токен бота
 BOT_TOKEN = "8491626430:AAFcomI07hJc-sEWKPMgc9G2qf38ZurV73E"
 
+# Файл для зберігання кодів
+CODES_FILE = "auth_codes.json"
+
 # Словник для зберігання кодів авторизації
 auth_codes = {}
 
+def load_codes():
+    """Завантажує коди з файлу"""
+    global auth_codes
+    try:
+        if os.path.exists(CODES_FILE):
+            with open(CODES_FILE, 'r') as f:
+                auth_codes = json.load(f)
+                # Видаляємо старі коди (старше 5 хвилин)
+                current_time = time.time()
+                auth_codes = {k: v for k, v in auth_codes.items() 
+                             if current_time - v.get('timestamp', 0) < 300}
+    except Exception as e:
+        logger.error(f"Error loading codes: {e}")
+        auth_codes = {}
+
+def save_codes():
+    """Зберігає коди в файл"""
+    try:
+        with open(CODES_FILE, 'w') as f:
+            json.dump(auth_codes, f)
+    except Exception as e:
+        logger.error(f"Error saving codes: {e}")
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обробник команди /start"""
+    """Обробник команди /start - генерує код авторизації"""
     user = update.effective_user
     chat_id = update.effective_chat.id
     
+    # Завантажуємо існуючі коди
+    load_codes()
+    
+    # Генеруємо 6-значний код
+    code = str(random.randint(100000, 999999))
+    
+    # Зберігаємо код з інформацією про користувача
+    auth_codes[code] = {
+        'chat_id': chat_id,
+        'user_name': f"{user.first_name} {user.last_name or ''}".strip(),
+        'username': user.username,
+        'timestamp': time.time()
+    }
+    
+    # Зберігаємо в файл
+    save_codes()
+    
     welcome_message = f"""
-👋 Привіт, {user.first_name}!
+🔐 <b>Код авторизації TimeKeeper</b>
 
-Я TimeKeeper Backup Bot - ваш помічник для автоматичного збереження бекапів.
+Ваш код: <code>{code}</code>
 
-🔐 <b>Як підключитись:</b>
+📱 <b>Що робити далі:</b>
 1. Відкрийте додаток TimeKeeper
-2. Перейдіть в Налаштування → Дані → Telegram Backup
-3. Натисніть "Підключити Telegram"
-4. Отримайте 6-значний код
-5. Надішліть мені цей код
+2. Налаштування → Дані → Telegram Backup
+3. Введіть цей код
+4. Натисніть "Підключити"
 
-📦 <b>Що я вмію:</b>
-• Автоматично зберігати ваші бекапи
-• Надсилати файли з історією робочих сесій
-• Захищати ваші дані від втрати
+⏱ Код дійсний 5 хвилин
 
-🔒 <b>Безпека:</b>
-Всі дані зберігаються тільки у вашому приватному чаті. Ніхто інший не має до них доступу.
-
-Надішліть мені код авторизації з додатку!
+✅ Після підключення всі бекапи будуть автоматично зберігатись тут!
 """
     
     await update.message.reply_text(
         welcome_message,
         parse_mode='HTML'
     )
+    
+    logger.info(f"Generated code {code} for user {user.first_name} (chat_id: {chat_id})")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обробник текстових повідомлень"""
     text = update.message.text.strip()
-    chat_id = update.effective_chat.id
-    user = update.effective_user
     
-    # Перевіряємо чи це код авторизації (6 цифр)
-    if text.isdigit() and len(text) == 6:
-        # Зберігаємо код для перевірки з додатку
-        auth_codes[text] = {
-            'chat_id': chat_id,
-            'user_name': f"{user.first_name} {user.last_name or ''}".strip(),
-            'username': user.username
-        }
-        
-        success_message = f"""
-✅ <b>Код отримано!</b>
+    help_message = """
+ℹ️ <b>Як підключитись:</b>
 
-Тепер поверніться в додаток TimeKeeper та натисніть кнопку "Підтвердити авторизацію".
+1. Натисніть /start щоб отримати код
+2. Введіть код в додатку TimeKeeper
+3. Готово!
 
-Ваш код: <code>{text}</code>
-
-⏱ Код дійсний протягом 5 хвилин.
+📦 Всі ваші бекапи будуть зберігатись в цьому чаті.
 """
-        
-        await update.message.reply_text(
-            success_message,
-            parse_mode='HTML'
-        )
-        
-        logger.info(f"Auth code {text} received from user {user.first_name} (chat_id: {chat_id})")
-    else:
-        # Якщо це не код авторизації
-        help_message = """
-❓ Надішліть мені 6-значний код авторизації з додатку TimeKeeper.
-
-Щоб отримати код:
-1. Відкрийте TimeKeeper
-2. Налаштування → Дані → Telegram Backup
-3. Натисніть "Підключити Telegram"
-4. Скопіюйте код та надішліть мені
-
-Або використайте команду /start для детальної інформації.
-"""
-        await update.message.reply_text(help_message)
+    
+    await update.message.reply_text(help_message, parse_mode='HTML')
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
